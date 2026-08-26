@@ -15,7 +15,13 @@ data class AuthResponse(
     @Json(name = "token") val token: String,
     @Json(name = "userId") val userId: String,
     @Json(name = "name") val name: String,
-    @Json(name = "email") val email: String
+    @Json(name = "email") val email: String,
+    @Json(name = "refreshToken") val refreshToken: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class RefreshRequest(
+    @Json(name = "refreshToken") val refreshToken: String
 )
 
 @JsonClass(generateAdapter = true)
@@ -24,6 +30,17 @@ data class AttachmentDto(
     @Json(name = "mimeType") val mimeType: String,
     @Json(name = "size") val size: String,
     @Json(name = "uriString") val uriString: String,
+    @Json(name = "isImage") val isImage: Boolean = false,
+    @Json(name = "url") val url: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SavedUploadDto(
+    @Json(name = "id") val id: String,
+    @Json(name = "url") val url: String,
+    @Json(name = "name") val name: String,
+    @Json(name = "mimeType") val mimeType: String,
+    @Json(name = "sizeBytes") val sizeBytes: Long = 0,
     @Json(name = "isImage") val isImage: Boolean = false
 )
 
@@ -115,6 +132,19 @@ data class ExportResponseDto(
     @Json(name = "dateRangeText") val dateRangeText: String? = null,
     @Json(name = "downloadUrl") val downloadUrl: String? = null,
     @Json(name = "filePayload") val filePayload: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class PlanChangeRequest(
+    @Json(name = "planId") val planId: String
+)
+
+@JsonClass(generateAdapter = true)
+data class PlanChangeResponse(
+    @Json(name = "planName") val planName: String,
+    @Json(name = "status") val status: String,
+    @Json(name = "currentPeriodEnd") val currentPeriodEnd: Long,
+    @Json(name = "invoice") val invoice: BillingInvoiceDto? = null
 )
 
 @JsonClass(generateAdapter = true)

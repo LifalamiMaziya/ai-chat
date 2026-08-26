@@ -47,6 +47,18 @@ interface ChatDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessage(message: ChatMessageEntity)
 
+    @Update
+    suspend fun updateMessage(message: ChatMessageEntity)
+
+    @Query("UPDATE chat_messages SET textContent = :content WHERE id = :messageId")
+    suspend fun updateMessageContent(messageId: String, content: String)
+
+    @Query("UPDATE chat_messages SET isStreaming = :streaming WHERE id = :messageId")
+    suspend fun setMessageStreaming(messageId: String, streaming: Boolean)
+
+    @Query("DELETE FROM chat_messages WHERE id = :messageId")
+    suspend fun deleteMessage(messageId: String)
+
     @Query("UPDATE chat_messages SET rating = :rating WHERE id = :messageId")
     suspend fun updateMessageRating(messageId: String, rating: Int)
 

@@ -50,7 +50,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val db = LuminaDatabase.getInstance(application)
     val serverConfig = ServerConfig(application)
     private val apiClient = ApiClient(serverConfig)
-    private val chatRepository = ChatRepository(db.chatDao(), apiClient)
+    private val chatRepository = ChatRepository(db.chatDao(), apiClient, application)
     private val exportRepository = ExportRepository(db.exportDao(), apiClient)
 
     val conversations: StateFlow<List<ConversationEntity>> = chatRepository.allConversations
@@ -152,6 +152,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         name = body.name,
                         email = body.email
                     )
+                    serverConfig.authToken = body.token
+                    serverConfig.refreshToken = body.refreshToken
                     prefs.edit()
                         .putBoolean("is_logged_in", true)
                         .putBoolean("is_guest", false)
@@ -160,6 +162,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         .apply()
                     _isLoggedIn.value = true
                     _isGuest.value = false
+                    fetchRemoteProfile()
                 } else {
                     // Client fallback for local / offline session
                     val fallbackName = email.substringBefore("@").replaceFirstChar { it.uppercase() }
@@ -200,6 +203,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (response.isSuccessful && response.body() != null) {
                     val body = response.body()!!
                     _userProfile.value = _userProfile.value.copy(name = body.name, email = body.email)
+                    serverConfig.authToken = body.token
+                    serverConfig.refreshToken = body.refreshToken
                     prefs.edit()
                         .putBoolean("is_logged_in", true)
                         .putBoolean("is_guest", false)
@@ -208,6 +213,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         .apply()
                     _isLoggedIn.value = true
                     _isGuest.value = false
+                    fetchRemoteProfile()
                 } else {
                     _userProfile.value = _userProfile.value.copy(name = name, email = email)
                     prefs.edit()
@@ -248,6 +254,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun signOut() {
+        serverConfig.clearCredentials()
         prefs.edit()
             .putBoolean("is_logged_in", true)
             .putBoolean("is_guest", true)
@@ -292,6 +299,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (_: Exception) {
                 // Client offline or server not ready yet
+            }
+        }
+    }
+
+    fun changePlan(planId: String) {
+        viewModelScope.launch {
+            try {
+                val response = apiClient.getApiService().changePlan(
+                    com.example.data.network.model.PlanChangeRequest(planId)
+                )
+                if (response.isSuccessful && response.body() != null) {
+                    _toastMessage.value = "Switched to ${response.body()!!.planName}"
+                    fetchRemoteProfile()
+                } else {
+                    _toastMessage.value = "Could not change plan (${response.code()})"
+                }
+            } catch (e: Exception) {
+                _toastMessage.value = "Network error: ${e.message}"
             }
         }
     }

@@ -73,6 +73,7 @@ fun SubscriptionScreen(
     userProfile: UserProfileState,
     billingHistory: List<BillingInvoice>,
     onCancelSubscription: () -> Unit,
+    onChangePlan: (String) -> Unit = {},
     onNavigateBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -452,9 +453,32 @@ fun SubscriptionScreen(
             title = { Text("Select Subscription Tier", color = Primary, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    PlanOptionCard("Starter (Free)", "$0/mo", "32k context, standard models")
-                    PlanOptionCard("Pro Plan (Current)", "$20/mo", "128k context, priority access", isCurrent = true)
-                    PlanOptionCard("Enterprise", "$99/mo", "1M+ context, dedicated VPC endpoints")
+                    val currentPlan = userProfile.planName
+                    PlanOptionCard(
+                        "Free", "$0/mo",
+                        "8k context, standard models",
+                        isCurrent = currentPlan.equals("Free", ignoreCase = true)
+                    ) {
+                        showChangePlanDialog = false
+                        onChangePlan("free")
+                    }
+                    PlanOptionCard(
+                        "Pro", "$20/mo",
+                        "128k context, multimodal, standard priority",
+                        isCurrent = currentPlan.equals("Pro", ignoreCase = true)
+                    ) {
+                        showChangePlanDialog = false
+                        onChangePlan("pro")
+                    }
+                    PlanOptionCard(
+                        "Ultra", "$200/mo",
+                        "1M+ context, multimodal, top priority access"
+                        ,
+                        isCurrent = currentPlan.equals("Ultra", ignoreCase = true)
+                    ) {
+                        showChangePlanDialog = false
+                        onChangePlan("ultra")
+                    }
                 }
             },
             confirmButton = {
@@ -577,7 +601,8 @@ fun PlanOptionCard(
     title: String,
     price: String,
     features: String,
-    isCurrent: Boolean = false
+    isCurrent: Boolean = false,
+    onClick: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -585,6 +610,7 @@ fun PlanOptionCard(
             .clip(RoundedCornerShape(10.dp))
             .border(1.dp, if (isCurrent) SecondaryContainer else SurfaceStroke, RoundedCornerShape(10.dp))
             .background(SurfaceElevated)
+            .clickable { onClick() }
             .padding(12.dp)
     ) {
         Row(

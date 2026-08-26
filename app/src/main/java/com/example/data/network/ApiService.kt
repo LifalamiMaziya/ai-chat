@@ -10,14 +10,21 @@ import com.example.data.network.model.EnhancePromptRequest
 import com.example.data.network.model.EnhancePromptResponse
 import com.example.data.network.model.ExportRequestDto
 import com.example.data.network.model.ExportResponseDto
+import com.example.data.network.model.PlanChangeRequest
+import com.example.data.network.model.PlanChangeResponse
+import com.example.data.network.model.RefreshRequest
+import com.example.data.network.model.SavedUploadDto
 import com.example.data.network.model.SendMessageRequest
 import com.example.data.network.model.ServerHealthResponse
 import com.example.data.network.model.UserProfileDto
+import okhttp3.MultipartBody
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Multipart
 import retrofit2.http.POST
+import retrofit2.http.Part
 import retrofit2.http.Path
 
 interface ApiService {
@@ -30,6 +37,11 @@ interface ApiService {
     @POST("api/auth/register")
     suspend fun register(
         @Body request: AuthRequest
+    ): Response<AuthResponse>
+
+    @POST("api/auth/refresh")
+    suspend fun refreshToken(
+        @Body request: RefreshRequest
     ): Response<AuthResponse>
 
     @GET("api/health")
@@ -66,8 +78,19 @@ interface ApiService {
     @GET("api/user/profile")
     suspend fun getUserProfile(): Response<UserProfileDto>
 
+    @POST("api/user/plan")
+    suspend fun changePlan(
+        @Body request: PlanChangeRequest
+    ): Response<PlanChangeResponse>
+
     @GET("api/user/invoices")
     suspend fun getBillingHistory(): Response<List<BillingInvoiceDto>>
+
+    @Multipart
+    @POST("api/uploads")
+    suspend fun uploadAttachment(
+        @Part file: MultipartBody.Part
+    ): Response<SavedUploadDto>
 
     @POST("api/exports/generate")
     suspend fun generateExport(

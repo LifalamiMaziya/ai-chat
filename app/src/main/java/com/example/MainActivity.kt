@@ -267,6 +267,7 @@ fun LuminaNexusApp(viewModel: MainViewModel) {
                     userProfile = userProfile,
                     billingHistory = billingHistory,
                     onCancelSubscription = { viewModel.cancelSubscription() },
+                    onChangePlan = { planId -> viewModel.changePlan(planId) },
                     onNavigateBack = { navController.popBackStack() }
                 )
             }

@@ -1,5 +1,7 @@
 package com.example.data.repository
 
+import android.content.Context
+import android.net.Uri
 import com.example.data.local.dao.ChatDao
 import com.example.data.local.entity.AttachmentItem
 import com.example.data.local.entity.ChatMessageEntity
@@ -10,16 +12,24 @@ import com.example.data.network.model.CreateConversationRequest
 import com.example.data.network.model.EnhancePromptRequest
 import com.example.data.network.model.SendMessageRequest
 import com.example.data.network.model.ServerHealthResponse
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.UUID
 
 class ChatRepository(
     private val chatDao: ChatDao,
-    private val apiClient: ApiClient
+    private val apiClient: ApiClient,
+    private val appContext: Context
 ) {
     val allConversations: Flow<List<ConversationEntity>> = chatDao.getAllConversations()
     val pinnedConversations: Flow<List<ConversationEntity>> = chatDao.getPinnedConversations()
+
+    private val streamingClient by lazy { apiClient.streaming }
 
     fun getMessagesForConversation(conversationId: String): Flow<List<ChatMessageEntity>> {
         return chatDao.getMessagesForConversation(conversationId)
@@ -82,6 +92,37 @@ class ChatRepository(
         chatDao.clearAllConversations()
     }
 
+    /**
+     * Uploads an attachment to the backend so the model can access it.
+     * Returns a server URL or null when the type is not uploadable / it failed.
+     */
+    private suspend fun uploadIfNeeded(att: AttachmentItem): String? = withContext(Dispatchers.IO) {
+        val uploadable = att.isImage || att.mimeType.equals("application/pdf", ignoreCase = true)
+        if (!uploadable) return@withContext null
+        try {
+            val uri = Uri.parse(att.uriString)
+            val bytes = appContext.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: return@withContext null
+            val mediaType = att.mimeType.ifBlank { "application/octet-stream" }.toMediaTypeOrNull()
+            val part = MultipartBody.Part.createFormData(
+                "file",
+                att.name.ifBlank { "attachment" },
+                bytes.toRequestBody(mediaType)
+            )
+            val response = apiClient.getApiService().uploadAttachment(part)
+            if (response.isSuccessful && response.body() != null) response.body()!!.url else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun extractCode(text: String): Pair<String?, String?> {
+        val match = CODE_FENCE.find(text) ?: return null to null
+        val language = match.groupValues[1].trim().ifBlank { null }
+        val snippet = match.groupValues[2].trimEnd()
+        return snippet to language
+    }
+
     suspend fun sendMessage(
         conversationId: String,
         userText: String,
@@ -117,16 +158,30 @@ class ChatRepository(
             )
         }
 
-        // 2. Prepare request payload for backend server
-        val attachmentDtos = attachments.map {
+        // 2. Upload attachments that carry content the model can use
+        val attachmentDtos = attachments.map { att ->
             AttachmentDto(
-                name = it.name,
-                mimeType = it.mimeType,
-                size = it.size,
-                uriString = it.uriString,
-                isImage = it.isImage
+                name = att.name,
+                mimeType = att.mimeType,
+                size = att.size,
+                uriString = att.uriString,
+                isImage = att.isImage,
+                url = uploadIfNeeded(att)
             )
         }
+
+        // 3. Placeholder AI bubble so the UI shows activity while streaming
+        val aiMessageId = UUID.randomUUID().toString()
+        val placeholder = ChatMessageEntity(
+            id = aiMessageId,
+            conversationId = conversationId,
+            sender = "ai",
+            textContent = "",
+            timestamp = System.currentTimeMillis(),
+            model = modelName,
+            isStreaming = true
+        )
+        chatDao.insertMessage(placeholder)
 
         val request = SendMessageRequest(
             conversationId = conversationId,
@@ -135,30 +190,77 @@ class ChatRepository(
             attachments = attachmentDtos
         )
 
-        // 3. Make HTTP request to backend server
-        val response = apiClient.getApiService().sendMessage(request)
+        // 4. Stream tokens; persist into Room on a light throttle
+        var lastWrite = 0L
+        val buffer = StringBuilder()
 
-        if (!response.isSuccessful || response.body() == null) {
-            val errorMsg = "Server error (${response.code()}): ${response.errorBody()?.string() ?: response.message()}"
-            throw IOException(errorMsg)
+        val streamed: Result<String>? = try {
+            streamingClient.stream(request) { delta ->
+                synchronized(buffer) { buffer.append(delta) }
+                val now = System.currentTimeMillis()
+                if (now - lastWrite > THROTTLE_MS) {
+                    lastWrite = now
+                    val snapshot = synchronized(buffer) { buffer.toString() }
+                    kotlinx.coroutines.runBlocking {
+                        chatDao.updateMessageContent(aiMessageId, snapshot)
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            null
         }
 
-        val dto = response.body()!!
+        val fullText = streamed?.getOrNull()
 
-        // 4. Save server's response to local database
-        val aiMessage = ChatMessageEntity(
-            id = dto.id ?: UUID.randomUUID().toString(),
-            conversationId = conversationId,
-            sender = "ai",
-            textContent = dto.textContent,
-            codeSnippet = dto.codeSnippet,
-            codeLanguage = dto.codeLanguage,
-            codeExplanation = dto.codeExplanation,
-            timestamp = dto.timestamp,
-            model = dto.model ?: modelName
+        if (fullText == null) {
+            // The stream never produced anything; fall back to a plain request.
+            try {
+                val response = apiClient.getApiService().sendMessage(request)
+                if (!response.isSuccessful || response.body() == null) {
+                    throw IOException("Server error (${response.code()})")
+                }
+                val dto = response.body()!!
+                val fallback = placeholder.copy(
+                    textContent = dto.textContent,
+                    codeSnippet = dto.codeSnippet,
+                    codeLanguage = dto.codeLanguage,
+                    codeExplanation = dto.codeExplanation,
+                    timestamp = dto.timestamp,
+                    model = dto.model ?: modelName,
+                    isStreaming = false
+                )
+                chatDao.updateMessage(fallback)
+                updateConversationAfterReply(conversationId, fallback.textContent)
+                return fallback
+            } catch (e: Exception) {
+                chatDao.deleteMessage(aiMessageId)
+                throw e
+            }
+        }
+
+        val text = fullText ?: ""
+        val (snippet, language) = extractCode(text)
+        val finalMessage = placeholder.copy(
+            textContent = text,
+            codeSnippet = snippet,
+            codeLanguage = language,
+            isStreaming = false
         )
-        chatDao.insertMessage(aiMessage)
-        return aiMessage
+        chatDao.updateMessage(finalMessage)
+        updateConversationAfterReply(conversationId, text)
+        return finalMessage
+    }
+
+    private suspend fun updateConversationAfterReply(conversationId: String, replyText: String) {
+        val conv = chatDao.getConversationById(conversationId) ?: return
+        chatDao.updateConversation(
+            conv.copy(
+                updatedAt = System.currentTimeMillis(),
+                previewMessage = if (replyText.isNotBlank()) {
+                    replyText.replace(Regex("\\s+"), " ").trim().take(60)
+                } else conv.previewMessage
+            )
+        )
     }
 
     suspend fun enhancePrompt(prompt: String): String {
@@ -175,5 +277,10 @@ class ChatRepository(
 
     suspend fun getAllMessagesForExport(): List<ChatMessageEntity> {
         return chatDao.getAllMessages()
+    }
+
+    companion object {
+        private const val THROTTLE_MS = 250L
+        private val CODE_FENCE = Regex("```([a-zA-Z0-9_+#.-]*)[ \\t]*\\r?\\n([\\s\\S]*?)```")
     }
 }
