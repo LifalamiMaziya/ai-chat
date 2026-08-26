@@ -1,0 +1,6 @@
+{
+  "name": "Lumina Nexus",
+  "description": "Futuristic AI Assistant with real-time chat, code highlighting, navigation drawer, subscription management, settings, and data export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
